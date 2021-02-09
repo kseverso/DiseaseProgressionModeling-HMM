@@ -1,16 +1,14 @@
-
 import torch
 import numpy as np
 from scipy.special import gamma as gamma_fn
 from sklearn.cluster import KMeans
 import math
-import argparse
 
 
 class HMM:
     def __init__(self, data, ins=None, k=5, TM=None, OM=None, full_cov=False, io=True, state_io=False,
                  personalized_io=False, personalized=False, eps=0, min_var=1e-6, device='cpu', priorV=False,
-                 priorMu=False, sample_num=1, alpha=10., beta=5., UT=False, var_fill=0.5, VI_diag=False):
+                 priorMu=False, sample_num=1, alpha=10., beta=5., UT=False, var_fill=0.5, VI_diag=False, lr=0.001):
         """
         personalized input-output hidden markov model. This class of models considers patient observations that are
         modeled by several possible factors, which are turned on or off using flags. The most complete version of the
@@ -40,6 +38,7 @@ class HMM:
         :param beta: parameter of the inverse gamma distribution used as prior for V_k and M_i
         :param UT: parameter to enforce an upper triangular structure for the transition matrix
         :param var_fill: parameter to specify initial guess for variance
+        :param VI_diag: flag to indicate whether or not the variational distributions should have a diagonal covariance structure
         """
 
         # number of latent states
@@ -107,7 +106,7 @@ class HMM:
                 self.N_hat[torch.tril(torch.ones(self.n, self.d, self.d)) == 1] = self.tril
 
 
-            self.optimizer = torch.optim.Adam([self.mu_hat, self.tril_vec, self.nu_hat, self.tril], lr=0.001)
+            self.optimizer = torch.optim.Adam([self.mu_hat, self.tril_vec, self.nu_hat, self.tril], lr=lr)
         elif self.perso_io:
             # case with personalized medication effects
             self.elbo = [] #objective
@@ -124,7 +123,7 @@ class HMM:
                 self.L_hat = torch.zeros(self.n, self.d, self.d, device=self.device)
                 self.L_hat[torch.tril(torch.ones(self.n, self.d, self.d)) == 1] = self.tril_vec
 
-            self.optimizer = torch.optim.Adam([self.mu_hat, self.tril_vec], lr=0.001)
+            self.optimizer = torch.optim.Adam([self.mu_hat, self.tril_vec], lr=lr)
         elif self.perso:
             # case with personalized state effects
             self.elbo = [] #objective
@@ -141,7 +140,7 @@ class HMM:
                 self.N_hat = torch.zeros(self.n, self.d, self.d, device=self.device)
                 self.N_hat[torch.tril(torch.ones(self.n, self.d, self.d)) == 1] = self.tril
 
-            self.optimizer = torch.optim.Adam([self.nu_hat, self.tril], lr=0.001)
+            self.optimizer = torch.optim.Adam([self.nu_hat, self.tril], lr=lr)
 
 
         # store the inputs used in analysis
@@ -169,7 +168,7 @@ class HMM:
 
     def initialize_model(self, km_init=True):
         """
-        Initializes the parameters of the PIOHMM model
+        Initializes the parameters of the PIOHMM model; internal method
         km_init: flag to indicate if kmeans should be used to initialize the state means
         """
         # All implementations of the model have the parameter set {mu, var, pi, A}
@@ -235,7 +234,7 @@ class HMM:
     def batch_mahalanobis(self, L, x, check=True):
         """
         Computes the squared Mahalanobis distance :math:`\mathbf{x}^\top\mathbf{M}^{-1}\mathbf{x}`
-        for a factored :math:`\mathbf{M} = \mathbf{L}\mathbf{L}^\top`.
+        for a factored :math:`\mathbf{M} = \mathbf{L}\mathbf{L}^\top`. internal method
 
         Accepts batches for both L and x.
         """
@@ -250,13 +249,13 @@ class HMM:
 
     def batch_diag(self, bmat):
         """
-        Returns the diagonals of a batch of square matrices.
+        Returns the diagonals of a batch of square matrices; internal method
         """
         return bmat.reshape(bmat.shape[:-2] + (-1,))[..., ::bmat.size(-1) + 1]
 
     def log_gaussian(self, params, m_sample=None, n_sample=None):
         """
-        Returns the density of the model data given the current parameters
+        Returns the density of the model data given the current parameters; internal method
         :param params: set of model parameters
         :param m_sample: current sample of m_i, only applicable for perso_io=True
         :param n_sample: current sample of r_i, only applicable for perso=True
@@ -319,7 +318,7 @@ class HMM:
     def log_gaussian_prior(self, rv, mu, L):
         """
         Returns the probability of random varaible rv with mean mu and variance var; does not support full covariance
-        structure
+        structure; internal method
         :param rv d
         :param mu d
         :param L cholesky matrix for covariance of RV
@@ -336,7 +335,7 @@ class HMM:
 
     def log_ig(self, noise):
         """
-        Returns the probability of the inverse gamma prior
+        Returns the probability of the inverse gamma prior; internal method
         :return:
         """
         
@@ -347,7 +346,7 @@ class HMM:
 
     def get_likelihoods(self, params, log=True, m_sample=None, n_sample=None):
         """
-        :param log: flag to indicate if likelihood should be returned in log domain
+        :param log: flag to indicate if likelihood should be returned in log domain; internal method
         :return likelihoods: (k x n x t)
         """
 
@@ -362,7 +361,7 @@ class HMM:
     def get_exp_data(self, mu, var, V=None, m_sample=None, n_sample=None):
         """
         Function to calculate the expectation of the conditional log-likelihood with respect to the variational
-        approximation q(M|X)
+        approximation q(M|X); internal method
         :return: expectation of the conditional log-likelihood wrt the variational approximation
         """
         if self.full_cov:
@@ -389,7 +388,7 @@ class HMM:
 
     def get_exp_M(self, mnoise):
         """
-        Function to calculate the expectation of the prior with respect to the variational approximation q(M|X)
+        Function to calculate the expectation of the prior with respect to the variational approximation q(M|X); internal method
         :return: expectation of the prior on M wrt the variational approximation
         """
 
@@ -400,7 +399,7 @@ class HMM:
 
     def get_exp_V(self, V, vnoise):
         """
-        Function to calculate the expectation of the prior with respect to the variational approximation q(M|X)
+        Function to calculate the expectation of the prior with respect to the variational approximation q(M|X); internal method
         :return: expectation of the prior on M wrt the variational approximation
         """
 
@@ -410,7 +409,7 @@ class HMM:
 
     def get_exp_Mtilde(self, nnoise):
         """
-        Function to calculate the expectation of the prior with respect to the variational approximation q(M|X)
+        Function to calculate the expectation of the prior with respect to the variational approximation q(M|X); internal method
         :return: expectation of the prior on M wrt the variational approximation
         """
 
@@ -422,8 +421,8 @@ class HMM:
 
     def exp_log_joint(self, params, e_out, samples):
         """
-        Function to calculate the expectation of the joint likelihood with respect to the variational approximation
-        :return:
+        Function to calculate the expectation of the joint likelihood with respect to the variational approximation; internal method
+        :return: log joint likelihood
         """
         #unpack parameters
         pi = params['pi']
@@ -475,7 +474,7 @@ class HMM:
 
     def entropy(self, e_out):
         """
-        Function to calculate the entropy
+        Function to calculate the entropy; internal method
         :return:
         """
         gamma = e_out['gamma']
@@ -506,7 +505,7 @@ class HMM:
 
     def variational_obj(self, params, e_out, samples):
         """
-        Function to calculate the elbo using the expectation of the joint likelihood and the entropy
+        Function to calculate the elbo using the expectation of the joint likelihood and the entropy; internal method
         :return:
         """
         obj1 = -self.exp_log_joint(params, e_out, samples)
@@ -518,7 +517,7 @@ class HMM:
 
     def baseline_variational_obj(self, params, e_out, samples):
         """
-        Function to calculate the elbo when only one time point has been observed
+        Function to calculate the elbo when only one time point has been observed; internal method
         """
         # unpack parameters
         pi = params['pi']
@@ -583,7 +582,7 @@ class HMM:
 
     def forward(self, likelihood, params):
         """
-        Calculate the forward pass of the EM algorithm for the HMM (Baum-Welch)
+        Calculate the forward pass of the EM algorithm for the HMM (Baum-Welch); internal method
         :param likelihood: log-likelihood of the data for the current parameters
         :param params: current model parameters
         :return: k x n x t log alpha's and the n x t scaling factors
@@ -614,7 +613,7 @@ class HMM:
 
     def backward(self, likelihood, params, scaling_factor):
         '''
-        Calaculate the backward pass of the EM algorithm for the HMM (Baum-Welch)
+        Calaculate the backward pass of the EM algorithm for the HMM (Baum-Welch); internal method
         :param likelihood: log-likelihood of the data for the current parameters
         :param params: current model parameters
         :param scaling_factor: scaling factors calculated during the forward pass; required for numerical stability
@@ -635,7 +634,7 @@ class HMM:
 
     def e_step(self, params, fixSample=False):
         '''
-        'expectation step' for the EM algorithm (Baum-Welch)
+        'expectation step' for the EM algorithm (Baum-Welch); internal method
         :return: updates gamma, xi and the log-likelihood
         '''
 
@@ -671,8 +670,6 @@ class HMM:
 
         xi = alpha[:, None, :, :-1] + beta[None, :, :, 1:] + likelihood[None, :, :, 1:] + \
                       logA[:, :, None, None] - scaling_factor[None, None, :, 1:] #note this is log xi
-        #Something about this is causing the upper triangular version to fail
-        #xi = xi*self.tm[None, None, :, 1:] #note that this is log xi
 
         pX = scaling_factor.sum()
 
@@ -700,7 +697,7 @@ class HMM:
 
     def m_step(self, e_out, params, samples):
         '''
-        'maximization step' for the EM algorithm (Baum-Welch)
+        fixed point equation for updating 'theta'
         :return: updates mu_k, sigma_k, V, A, pi
         '''
 
@@ -727,9 +724,7 @@ class HMM:
             # compute `N_k` the proxy "number of points" assigned to each distribution.
             # gamma is k x n x t
             N_k1 = ((gamma[:, :, 0].exp())*self.om[None, :, 0]).sum(1)
-            #print(N_k1.sum())
             N_k = ((gamma.exp())*self.om[None, :, :]).sum(-1).sum(-1)
-            #print(N_k)
 
             # get the means by taking the weighted combination of points
             r = self.data
@@ -809,7 +804,7 @@ class HMM:
             if self.perso:
                 r = r - n_sample[None, :, None, :]
             r = r * self.om[None, :, :, None]
-            ### CHECK DERIVATION HERE
+
             if self.full_cov:
                 if self.perso_io:
                     var = ((gamma[:, :, :, None, None].exp()) * self.om[None, :, :, None, None]) * (torch.einsum(
@@ -865,11 +860,6 @@ class HMM:
             else:
                 A = logA.exp() + self.eps
 
-            # reset dimensionality
-            # mu = mu.squeeze(1)
-            # var = var.squeeze(1)
-            # pi = pi.squeeze()
-
             params = {'mu': mu.to(self.device), 'var': var.to(self.device), 'pi': pi.to(self.device), 'A': A.to(self.device)}
 
             if self.io:
@@ -883,21 +873,20 @@ class HMM:
             if self.priorMu:
                 params['munoise'] = munoise.to(self.device)
 
-
-        # #
-        #print('mu_i: ' , self.mu_hat[0, :])
-        # print('var shape:', self.var)
-        #print('A:', A)
-        #print('pi:', pi)
-        #print('V: ', V)
-        #print('mu:', mu)
-        #print('var:', var)
-        # print('mu_hat shape:', self.mu_hat)
-        # print('L_hat shape:', self.L_hat)
         return params
 
     def learn_model(self, num_iter=1000, use_cc=False, cc=1e-6, intermediate_save=True, load_model=False,
                     model_name=None):
+        '''
+        function to learn the parameters of the PIOHMM
+        :param num_iter: number of steps for the learning procedure
+        :param use_cc: flag to indicate if a convergence criteria should be used
+        :param cc: tolerance for the convergence criteria
+        :param intermediate_save: flag to indicate if parameters should be saved during training
+        :param load_model: flag to indicate if parameters should be loaded from a saved model
+        :param model_name: file name of model to be loaded
+        :return: depends on the type of model and will include parameters, variational parameters, liklihood, elbo
+        '''
 
         if load_model:
             load_params = torch.load(model_name)
@@ -913,9 +902,6 @@ class HMM:
                 # initialize using the mean of the IG distribution
                 mnoise = torch.tensor([1.5], device=self.device)
                 params['mnoise'] = mnoise
-
-
-
         else:
             params = self.initialize_model()
         prev_cost = float('inf')
@@ -958,24 +944,24 @@ class HMM:
             return params, e_out, self.ll
 
     def est_test_pX(self, params):
+        '''
+        calaculate the marginal probability of the observed data
+        '''
 
         likelihood = self.get_likelihoods(params, fixSample=True)
 
         alpha, scaling_factor = self.forward(likelihood, params)
-        # NB: the exponentiated alpha sum over the first dimension should be one
-        # print('alpha check:',alpha)
-        # beta = self.backward(likelihood, params, scaling_factor)
-        # the expontiated beta sum over the first dimension should be numerically well-behaved
-        # print('beta check:', beta)
-        # self.gamma = alpha + beta  # note this is log gamma
-
-        # self.xi = alpha[:, None, :, :-1] + beta[None, :, :, 1:] + likelihood[None, :, :, 1:] + \
-        #          self.logA[:, :, None, None] - scaling_factor[None, None, :, 1:]  # note this is log xi
-        # self.xi = self.xi * self.tm[None, None, :, 1:]  # note that this is log xi
 
         return scaling_factor.sum()
 
     def learn_baseline_vi_params(self, params, num_iter=1000, intermediate_save=False):
+        '''
+        function to learn personalized parameters using only baseline data and fixed estimates of 'theta'
+        :param params: fixed estimates of 'theta'
+        :param num_iter: number of steps for the learning procedure
+        :param intermediate_save: flag to indicate if parameters should be saved during training
+        :return inferred parameters
+        '''
         for _ in range(num_iter):
             # default setting is to assume no personalized effects
             m_sample = None
@@ -1020,7 +1006,13 @@ class HMM:
             return params, e_out, self.ll
 
     def learn_vi_params(self, params, num_iter=1000, intermediate_save=False):
-
+        '''
+        function to learn personalized parameters using fixed estimates of 'theta'
+        :param params: fixed estimates of 'theta'
+        :param num_iter: number of steps for the learning procedure
+        :param intermediate_save: flag to indicate if parameters should be saved during training
+        :return inferred parameters
+        '''
         for _ in range(num_iter):
             if intermediate_save:
                 if _ % 500 == 0:
@@ -1049,10 +1041,15 @@ class HMM:
                 N_hat = None, fixSample=False):
         '''
         Function to calculate the test log likelihood
-        :param params:
-        :param iter:
-        :param returnVars:
-        :return:
+        :param params: fixed estimate for 'theta'
+        :param num_samples: number of samples for importance sampling
+        :param importance_sampling: flag to indicate if importance sampling should be use
+        :param mu_hat: mean of the variational distribution for personalized medication effects
+        :param nu_hat: mean of the variational distrbution for personalized state effects
+        :param L_hat: cholesky factor for covariance matrix of the variational distribution for personalized medication effects
+        :param N_hat: cholesky factor for covariance matric of the variational distribution for personalized state effects
+        :param fixSample: flag to indicate if only the variational mean should be used
+        :return: test log likelihood
         '''
 
         if importance_sampling:
@@ -1117,40 +1114,20 @@ class HMM:
 
     def predict_sequence(self, params, m_sample=None, n_sample=None):
         '''
-
-        :return:
+        function to apply viterbi algorithm
+        :param params: fixed estimates of the model parameters
+        :param m_sample: value to use for the personalized medication effects
+        :param n_sample: value to use for the personalized state effects
+        :return mps: most probable sequence n x t
         '''
         likelihood = self.get_likelihoods(params, m_sample=m_sample, n_sample=n_sample)
-        # print('likelihood:', likelihood)
-        mps, omega, psi = self.viterbi(likelihood, params)
-        #mps = self.viterbi(likelihood, params)
-        return mps, omega, psi
+        mps = self.viterbi(likelihood, params)
 
-    # def viterbi(self, likelihood, params):
-    # note that this code was used for testing viterbi alg.
-    #     logA = params['A'].log()
-    #     pi = params['pi']
-    #
-    #     T1 = torch.zeros(self.k, self.n, self.t).to(self.device)
-    #     T2 = torch.zeros(self.k, self.n, self.t).to(self.device)
-    #     mps = torch.zeros(self.n, self.t).to(self.device)
-    #
-    #     T1[:,:,0] = pi[:, None].log() + likelihood[:,:,0]
-    #     for i in range(1, self.t):
-    #         for j in range(self.k):
-    #             T1[j, :, i], T2[j, :, i] = torch.max(logA[:, j, None, None] + likelihood[None, j, :, i] + T1[:, None, :, i-1], dim=0)
-    #     mps[:,-1] = torch.argmax(T1[:,:,-1], dim=0)
-    #     for i in range(self.t-1, 0, -1):
-    #         for j in range(self.n):
-    #             idx = mps[j, i].long()
-    #             mps[j, i-1] = T2[idx, j, i]
-    #
-    #     return mps
-
+        return mps
 
     def viterbi(self, likelihood, params):
         '''
-        apply the viterbi algorithm to find the most probable sequence per patient
+        apply the viterbi algorithm to find the most probable sequence per patient; internal method
         omega is the maximimum joint probability of the previous data and latent states ; the last value is the joint
         distribution of the most probable path
         :return:
@@ -1165,8 +1142,6 @@ class HMM:
         omega[:, :, 0] = pi[:, None].log() + likelihood[:, :, 0]
         for i in range(1, self.t):
 
-            # omega[:, :, i], psi[:, :, i] = torch.max(likelihood[None, :, :, i] + self.logA[:, :, None] +
-            #                                          omega[:, None, :, i-1], dim=0)
             inner_max, psi[:, :, i] = torch.max(logA[:, :, None] + omega[:, None, :, i-1], dim=0)
             omega[:, :, i] = likelihood[:, :, i] + inner_max
 
@@ -1175,11 +1150,12 @@ class HMM:
         for i in range(self.t-2, -1, -1):
             psi_sample = psi[:, :, i+1]
             mps[:, i] = torch.gather(psi_sample, 0, mps[:, i+1].long().unsqueeze(0))
-        return mps, omega, psi
+        return mps
 
-    def change_data(self, data, ins=None, OM=None, TM=None, reset_VI=True, params=[]):
+    def change_data(self, data, ins=None, OM=None, TM=None, reset_VI=True, params=[], lr=0.001):
         '''
         Replace model dataset
+        :param data: new dataset to use; additional parameters are corresponding dataset features / descriptors
         :return: none, updates to model params only
         '''
 
@@ -1243,7 +1219,7 @@ class HMM:
                     self.N_hat[torch.tril(torch.ones(self.n, self.d, self.d)) == 1] = self.tril
 
 
-                self.optimizer = torch.optim.Adam([self.mu_hat, self.tril_vec, self.nu_hat, self.tril], lr=0.001)
+                self.optimizer = torch.optim.Adam([self.mu_hat, self.tril_vec, self.nu_hat, self.tril], lr=lr)
             elif self.perso_io:
                 self.elbo = []
                 mnoise = params['mnoise']
@@ -1263,7 +1239,7 @@ class HMM:
                     self.L_hat = torch.zeros(self.n, self.d, self.d, device=self.device)
                     self.L_hat[torch.tril(torch.ones(self.n, self.d, self.d)) == 1] = self.tril_vec
 
-                self.optimizer = torch.optim.Adam([self.mu_hat, self.tril_vec], lr=0.001)
+                self.optimizer = torch.optim.Adam([self.mu_hat, self.tril_vec], lr=lr)
             elif self.perso:
                 self.elbo = []
                 nnoise = params['nnoise']
@@ -1283,13 +1259,16 @@ class HMM:
                     self.N_hat = torch.zeros(self.n, self.d, self.d, device=self.device)
                     self.N_hat[torch.tril(torch.ones(self.n, self.d, self.d)) == 1] = self.tril
 
-                self.optimizer = torch.optim.Adam([self.nu_hat, self.tril], lr=0.001)
+                self.optimizer = torch.optim.Adam([self.nu_hat, self.tril], lr=lr)
 
 
     def forward_pred(self, params, m_sample=None, n_sample=None):
         '''
-
+        function to forecast one-step-ahead
         :return:
+            osapd: one-step-ahead predictive density
+            bs: belief state
+            lpe: log probability evidence
         '''
         pi = params['pi']
         A = params['A']
@@ -1314,6 +1293,7 @@ class HMM:
     def forward_sample(self, prob, ns=100):
         '''
         prob: k x n x t 'one-step-ahead predictive density' p(z_it=j | x_i1, ... x_it-1)
+        return: samples from the one-step-ahed predictive density
         '''
         vals = torch.zeros(ns, self.n, self.t-1, self.d)
         for i in range(self.t-1):
@@ -1330,17 +1310,12 @@ class HMM:
 
         return vals
 
-    def get_beliefstate(self, params, m_sample=None, n_sample=None):
-        likelihood = self.get_likelihoods(params, m_sample=m_sample, n_sample=n_sample)
-        alpha, scaling_factor = self.forward(likelihood, params)
-
-        return alpha
-
     def load_model(self, filename, cpu=True):
         '''
-
-        :param filename:
-        :return:
+        function to specifically add the variational model parameters because they are properties of the model; note that
+        variable names have been assumed here and the save file needs to be formatted accordingly
+        :param filename: name of filename containing model
+        :return: none
         '''
         if cpu:
             trained_model = torch.load(filename, map_location=torch.device('cpu'))
@@ -1351,8 +1326,12 @@ class HMM:
         # Note that this is currently not setup to continue training. tril_vec needs to be populated and have
         # requires_grad = True to be able to continue training; this function is only to load in a model. Additional
         # functionality is required to continue training
-        self.mu_hat = trained_model['Mi'].to(self.device)
-        self.L_hat = trained_model['Li'].to(self.device)
+        if self.perso_io:
+            self.mu_hat = trained_model['Mi'].to(self.device)
+            self.L_hat = trained_model['Li'].to(self.device)
+        if self.perso:
+            self.nu_hat = trained_model['ni'].to(self.device)
+            self.N_hat = trained_model['Ni'].to(self.device)
 
     def baseline_risk(self, params, ns=500, type='sample', m_sample=None):
         '''
@@ -1383,7 +1362,6 @@ class HMM:
                 #NB: one of the pi elements is zero so we don't work directly in the log space
                 p_z1 = pi[:, None]*likelihood[:, :, 0].squeeze() / \
                     (pi[:, None]*likelihood[:, :, 0].squeeze()).sum(0)
-                #print('Check sum:', p_z1.sum(0))
                 p_z6month = (A[:, :, None]*(A[:, :, None]*p_z1[:, None, :]).sum(0)).sum(0)
 
                 p_z1year = p_z1
@@ -1396,7 +1374,7 @@ class HMM:
 
 
                 for j in range(self.n):
-                    # model seems to be running into an underflow issue for highly progressed patients... hack for now
+                    # check for underflow issues
                     if np.isnan(p_z1year[:,j].detach().numpy()).all():
                         p_z1year[:,j ] = torch.zeros(self.k)
                         p_z1year[-1,j] = 1
@@ -1459,7 +1437,7 @@ class HMM:
             # NB: one of the pi elements is zero so we don't work directly in the log space
             p_z1 = pi[:, None] * likelihood[:, :, 0].squeeze() / \
                    (pi[:, None] * likelihood[:, :, 0].squeeze()).sum(0)
-            # print('Check sum:', p_z1.sum(0))
+
             p_z6month = (A[:, :, None] * (A[:, :, None] * p_z1[:, None, :]).sum(0)).sum(0)
 
             p_z1year = p_z1
@@ -1474,7 +1452,7 @@ class HMM:
             idx2 = torch.argmax(p_z2year, dim=0)
 
             for j in range(self.n):
-                # model seems to be running into an underflow issue for highly progressed patients... hack for now
+                # check for underflow issues
                 if np.isnan(p_z1year[:, j]).all():
                     p_z1year[:, j] = torch.zeros(self.k)
                     p_z1year[-1, j] = 1
@@ -1488,353 +1466,72 @@ class HMM:
 
 if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", default=0)
-    parser.add_argument("--n", default=100)
-    parser.add_argument("--t", default=10)
-    parser.add_argument("--useSyn", default=False)
-    parser.add_argument("--filename", default=None)
-    parser.add_argument("--k", default=3)
-    parser.add_argument("--i", default=1)
-    parser.add_argument("--perso", default=False)
-    parser.add_argument("--perso_io", default=False)
-    parser.add_argument("--io", default=False)
-    parser.add_argument("--device", default='cpu')
-    args = parser.parse_args()
-
-    np.random.seed(int(args.seed))
-    torch.manual_seed(int(args.seed))
-
-    def make_data(n, d, t, k=3, io=False, perso_io=False, perso=False):
-
-        #A = torch.Tensor([[0.25, 0.5, 0.25], [0.6, 0.25, 0.15], [0.3, 0.3, 0.4]])
-        #pi = torch.Tensor([0.6, 0.3, 0.1])
-        conc = 0.5*torch.ones(k)
-        A = torch.zeros(k,k)
-        a_dist = torch.distributions.dirichlet.Dirichlet(conc)
-        for i in range(k):
-            A[i, :] = a_dist.sample()
-        pi = a_dist.sample()
-
-        mu = torch.randn(k, d)
-        var = torch.rand(k, d)
-        #mu = torch.Tensor([[2.5, 2.5], [5, 5], [8, 1]])
-        #var = torch.Tensor([[1.2, 0.8], [0.75, 0.75], [0.6, 1.]])
-        V = torch.zeros(mu.shape)
-
-        X = torch.zeros(n, t, d)
-        Z = torch.zeros(n, t, dtype=torch.long)
-        M = torch.zeros(n, d)
-        R = torch.zeros(n, d)
-        D = torch.zeros(n, t)
-
-        if io:
-            #V = torch.Tensor([[0.7, 1.2], [0.2, 0.2], [1.7, 0.6]])
-            V = torch.randn(k, 2)
-        if perso_io:
-            mnoise = 1
-            mi_dist = torch.distributions.normal.Normal(torch.zeros(d), mnoise * torch.ones(d))
-
-        if perso:
-            rnoise = 0.7
-            ri_dist = torch.distributions.normal.Normal(torch.zeros(d), rnoise * torch.ones(d))
-
-        #loop to make data
-        for i in range(n):
-            if perso_io:
-                M[i, :] = mi_dist.sample()
-            if perso:
-                R[i, :] = ri_dist.sample()
-
-            for j in range(t):
-                if j == 0:
-                    Z[i, j] = torch.multinomial(pi, num_samples=1).byte()
-                    D[i, j] = torch.rand(1)
-                    m_dist = torch.distributions.normal.Normal(
-                        mu.index_select(0, Z[i, j]) + V.index_select(0, Z[i, j])*D[i,j] + M[i, :]*D[i, j] + R[i, :],
-                        var.index_select(0, Z[i, j]))
-                    X[i, j, :] = m_dist.sample()
-
-                else:
-                    Z[i, j] = torch.multinomial(A[Z[i,j-1],:], num_samples=1)
-                    D[i, j] = torch.rand(1)
-                    m_dist = torch.distributions.normal.Normal(
-                        mu.index_select(0, Z[i, j]) + V.index_select(0, Z[i, j])*D[i,j] + M[i, :]*D[i, j] + R[i, :],
-                        var.index_select(0, Z[i, j]))
-                    X[i, j, :] = m_dist.sample()
-
-        if perso_io and perso:
-            params = {'A': A, 'pi': pi, 'mu': mu, 'var': var, 'V': V, 'mnoise': mnoise, 'rnoise':rnoise}
-        elif perso_io:
-            params = {'A': A, 'pi': pi, 'mu': mu, 'var': var, 'V': V, 'mnoise': mnoise}
-        elif perso:
-            params = {'A': A, 'pi': pi, 'mu': mu, 'var': var, 'V': V, 'rnoise': rnoise}
-        else:
-            params = {'A': A, 'pi': pi, 'mu': mu, 'var': var, 'V': V}
-
-        return X, Z, D, M, R, params
-
-    if not args.useSyn:
-        CV_data = joblib.load(filename=args.filename)
-
-        dataset_train = CV_data['trainData']
-        dataset_valid = CV_data['validData']
-
-        drugs_train = CV_data['trainDrugs']
-        drugs_valid = CV_data['validDrugs']
-
-        k = int(args.k)
-        TM_train = CV_data['TM_train']
-        OM_train = CV_data['OM_train']
-        TM_valid = CV_data['TM_valid']
-        OM_valid = CV_data['OM_valid']
-
-        model = HMM(dataset_train, drugs_train, k, TM_train, OM_train, full_cov=True, device=args.device, regV=True)
-        mu, var, pi, A, V, mu_hat, L_hat, M0_hat, mnoise_hat, ll, elbo, g, xi = model.learn_model(num_iter=5000, cc=1e-6)
-        store_train_ll, train_elbo = model.calc_pX()
-
-        trained_model = {'mu': mu, 'var': var, 'pi': pi, 'A': A, 'Mi': mu_hat, 'gamma': g, 'xi': xi, 'L': L_hat,
-                         'M0': M0_hat, 'mnoise': mnoise_hat, 'V': V}
-        torch.save(trained_model, './iohmm_v2_pkl/PD_HMM_Model_' + str(int(args.i)) + '_k' + str(k) + '.pkl')
-
-        model.change_data(dataset_valid, drugs_valid, OM_valid, TM_valid)
-        store_valid_ll, valid_elbo = model.calc_pX()
-
-        CV_results = {'train': store_train_ll, 'valid': store_valid_ll, 'elbo': elbo, 'validation_elbo': valid_elbo}
-        torch.save(CV_results, './iohmm_v2_pkl/PD_HMM_CV_pX_fullTime_v2_CV' + str(int(args.i)) + 'k' + str(k) + '.pkl')
-
-    else:
-        t = int(args.t)
-        d = 2
-        n=int(args.n)
-        nv = 50
-
-        #make a training dataset
-        X, Z, D, M, R, true_params = make_data(n, d, t, k=int(args.k), perso=False, perso_io=args.perso_io, io=args.io)
-        #make a test dataset
-        X_test, Z_test, D_test, M_test, R_test, _ = make_data(nv, d, t, k=int(args.k), perso=args.perso, perso_io=args.perso_io, io=args.io)
-
-
-        time_mask = torch.ones(n,t)
-        obs_mask = np.ones((n, t))
-
-        time_mask_valid = torch.ones(nv,t)
-        obs_mask_valid = np.ones((nv,t))
-        OM_valid = torch.Tensor(obs_mask_valid).float()
-
-        r = np.random.rand(n,t)
-        #obs_mask[r < 0.2] = 0
-        obs_mask[r < 0] = 0
-        OM = torch.Tensor(obs_mask).float()
-
-        niter = 2000
-
-        print(M)
-        print(R)
-        print(true_params['V'])
-        model = HMM(X, D, k=int(args.k), TM=time_mask, OM=OM, full_cov=True, priorV=False, io=args.io, personalized=args.perso,
-                    personalized_io=args.perso_io, state_io=args.io)
-        if (args.perso and args.perso_io):
-            print('running double-personalized IO-HMM')
-            params, e_out, ll, elbo, M_hat, L_hat, R_hat, N_hat = model.learn_model(num_iter=3500, cc=1e-3)
-        elif args.perso_io:
-            print('running med-personalized IO-HMM')
-            params, e_out, ll, elbo, M_hat, L_hat = model.learn_model(num_iter=2000, cc=1e-3)
-        elif args.perso:
-            print('running personalized IO-HMM')
-            params, e_out, ll, elbo, R_hat, N_hat = model.learn_model(num_iter=2000, cc=1e-3)
-        elif args.io:
-            print('running IO-HMM')
-            params, e_out, ll = model.learn_model(num_iter=3500, cc=1e-3, intermediate_save=False, use_cc=True)
-        else:
-            print('running HMM')
-            params, e_out, ll = model.learn_model(num_iter=3500, cc=1e-6, intermediate_save=False, use_cc=True)
-
-        mps, omega, psi = model.predict_sequence(params)
-        #model.change_data(X_valid, D_valid, time_mask_valid, OM_valid)
-        #valid_elbo, valid_elbo_seq, px_seq, M_hat_valid, L_hat_valid = model.calc_pX(niter, returnVars=True)
-        #mps_valid = model.predict_sequence()
-
-        #use learn state means to calculate match
-        C = np.zeros((int(args.k), int(args.k)))
-        for i in range(int(args.k)):
-            for j in range(int(args.k)):
-                C[i,j] = np.linalg.norm(true_params['mu'][i, :] - params['mu'][j, :])
-
-        import scipy
-        row_ind, col_ind = scipy.optimize.linear_sum_assignment(C)
-        print(row_ind)
-        print(col_ind)
-
-        plt.figure()
-        plt.subplot(1,2,1)
-        plt.plot(ll, 'o-')
-        plt.title('Likelihood')
-
-        plt.subplot(1,2,2)
-        plt.plot(np.diff(ll),'o-')
-        plt.title('Likelihood Change')
-
-        if args.perso or args.perso_io:
-            plt.figure()
-            plt.subplot(1,2,1)
-            plt.plot(elbo, 'o-')
-            plt.title('ELBO')
-
-            plt.subplot(1,2,2)
-            plt.plot(np.diff(elbo),'o-')
-            plt.title('ELBO Change')
-
-        obs_pi = torch.zeros(3)
-        Z_init = Z[:,0]
-        c = 0.
-        for i in range(3):
-            obs_pi[i] = (Z_init.data == c).sum()
-            c += 1.
-
-        print('Obs pi:', true_params['pi'])
-        print('Est pi:', params['pi'][col_ind])
-
-        plt.figure()
-        plt.subplot(1,2,1)
-        sns.heatmap(true_params['mu'], annot=True)
-        plt.title('True mu')
-
-        plt.subplot(1,2,2)
-        sns.heatmap(params['mu'][col_ind, :], annot=True)
-
-        plt.figure()
-        plt.subplot(1, 2, 1)
-        sns.heatmap(true_params['pi'][np.newaxis, :], annot=True)
-        plt.title('True pi')
-
-        plt.subplot(1, 2, 2)
-        sns.heatmap(params['pi'][col_ind][np.newaxis, :], annot=True)
-
-        reord_A = np.zeros((int(args.k), int(args.k)))
-        for i in range(int(args.k)):
-            for j in range(int(args.k)):
-                reord_A[i,j] = params['A'][col_ind[i], col_ind[j]]
-
-        plt.figure()
-        plt.subplot(1,2,1)
-        sns.heatmap(true_params['A'], annot=True)
-
-        plt.subplot(1,2,2)
-        sns.heatmap(reord_A, annot=True)
-
-
-
-        print('Est A:', params['A'])
-        if args.io:
-            #print('Est V:', params['V'])
-
-            plt.figure()
-            plt.subplot(1, 2, 1)
-            sns.heatmap(true_params['V'], annot=True)
-            plt.title('True V')
-
-            plt.subplot(1, 2, 2)
-            sns.heatmap(params['V'][col_ind, :], annot=True)
-
-        if args.perso_io:
-            print('Learned noise: ', params['mnoise'])
-
-            plt.figure()
-            plt.subplot(1, 2, 1)
-            plt.scatter(M[:, 0], M_hat.detach().numpy()[:, 0])
-            plt.plot([-2, 2], [-2, 2], 'k')
-            plt.xlabel('M')
-            plt.ylabel('M_hat')
-
-            plt.subplot(1, 2, 2)
-            plt.scatter(M[:, 1], M_hat.detach().numpy()[:, 1])
-            plt.plot([-2, 2], [-2, 2], 'k')
-            plt.xlabel('M')
-            plt.ylabel('M_hat')
-            plt.tight_layout()
-
-
-        plt.figure()
-        plt.subplot(1,2,1)
-        plt.imshow(mps)
-        plt.title('Most Probable Sequence')
-
-        plt.subplot(1,2,2)
-        plt.imshow(Z)
-        plt.title('True Z')
-
-        plt.figure()
-        plt.subplot(1,2,1)
-        plt.scatter(Z[:,0],mps[:, 0] + 0.05*torch.randn(int(args.n)))
-        plt.title('Check first obs')
-
-        t_id = np.random.randint(0,t)
-        plt.subplot(1,2,2)
-        plt.scatter(Z[:,t_id], mps[:,t_id] + 0.05*torch.randn(int(args.n)))
-
-        check_id = np.random.randint(0,n)
-        plt.figure()
-        plt.scatter(Z[check_id,:], mps[check_id,:])
-
-        plt.show()
-
-        # plt.figure()
-        # plt.subplot(1,2,1)
-        # plt.scatter(M_valid[:,0], M_hat_valid.detach().numpy()[:, 0])
-        # plt.plot([-2, 2], [-2, 2], 'k')
-        # plt.xlabel('M_valid')
-        # plt.ylabel('M_hat_valid')
-        #
-        # plt.subplot(1,2,2)
-        # plt.scatter(M_valid[:, 1], M_hat_valid.detach().numpy()[:, 1])
-        # plt.plot([-2, 2], [-2, 2], 'k')
-        # plt.xlabel('M_valid')
-        # plt.ylabel('M_hat_valid')
-
-        true_delta = np.zeros((n, t, d))
-        obs_delta = np.zeros((n, t, d))
-
-        for i in range(n):
-            for j in range(t):
-                true_delta[i, j, :] = true_params['V'].index_select(0, Z[i, j])*D[i, j] + M[i, :]*D[i, j]
-                obs_delta[i, j, :] = params['V'].index_select(0, mps[i,j].long())*D[i,j] + M_hat.detach()[i, :]*D[i, j]
-
-        true_valid_delta = np.zeros((nv, t, d))
-        obs_valid_delta = np.zeros((nv, t, d))
-
-        for i in range(nv):
-            for j in range(t):
-                true_valid_delta[i,j,:] = V.index_select(0, Z_valid[i,j])*D_valid[i,j] + M_valid[i,:]*D_valid[i,j]
-                obs_valid_delta[i,j,:] = V_hat.index_select(0, mps_valid[i,j].long())*D_valid[i,j] + M_hat_valid.detach()[i, :]*D_valid[i,j]
-
-        plt.figure()
-        plt.subplot(1,2,1)
-        plt.scatter(true_delta[:, :, 0], obs_delta[:, :, 0])
-        plt.plot([-2, 2], [-2, 2], 'k')
-        plt.xlabel('Delta')
-        plt.ylabel('Delta_hat')
-
-        plt.subplot(1,2,2)
-        plt.scatter(true_delta[:, :, 1], obs_delta[:, :, 1])
-        plt.plot([-2, 2], [-2, 2], 'k')
-        plt.xlabel('Delta')
-        plt.ylabel('Delta_hat')
-        plt.tight_layout()
-
-        plt.figure()
-        plt.subplot(1,2,1)
-        plt.scatter(true_valid_delta[:, :, 0], obs_valid_delta[:, :, 0])
-        plt.plot([-2, 2], [-2, 2], 'k')
-        plt.xlabel('Delta_valid')
-        plt.ylabel('Delta_valid_hat')
-
-        plt.subplot(1,2,2)
-        plt.scatter(true_valid_delta[:, :, 1], obs_valid_delta[:, :, 1])
-        plt.plot([-2, 2], [-2, 2], 'k')
-        plt.xlabel('Delta_valid')
-        plt.ylabel('Delta_valid_hat')
-        plt.tight_layout()
-
-        plt.show()
-
+    #Note that this is also contained in the jupyter notebook for more integrated visuals
+    n = 100  # number of samples
+    d = 1  # dimensionality of observations
+    t = 20  # number of time steps
+    k = 2  # number of states
+
+    A = torch.tensor([[0.6, 0.4], [0.27, 0.73]])
+    a_dist = torch.distributions.dirichlet.Dirichlet(3 * torch.ones(k))
+    pi = a_dist.sample()
+
+    mu = torch.tensor([0., 2.])  # means
+    var = torch.tensor([0.1, 0.1])  # covariance
+
+    b = 2 # limit of the uniform distribution to specify personalized state effects
+
+    X = torch.zeros((n, t, d))
+    Z = torch.zeros((n, t), dtype=torch.long)
+
+    for i in range(n):
+        for j in range(t):
+            if j == 0:
+                Z[i, j] = torch.multinomial(pi, num_samples=1).byte()
+                m_dist = torch.distributions.normal.Normal(
+                    mu.index_select(0, Z[i, j]),
+                    var.index_select(0, Z[i, j]))
+                X[i, j, :] = m_dist.sample()
+            else:
+                Z[i, j] = torch.multinomial(A[Z[i, j - 1], :], num_samples=1)
+                m_dist = torch.distributions.normal.Normal(
+                    mu.index_select(0, Z[i, j]),
+                    var.index_select(0, Z[i, j]))
+                X[i, j, :] = m_dist.sample()
+
+    X_hat = torch.zeros(n, t, d)
+
+    l = 2.5  # lengthscale for the SE kernel
+    s = 4  # sigma^2 for the SE kernel
+
+    # build covariance matrix
+    var_x = torch.zeros(t, t)
+    t_vec = torch.range(0, t)
+    for j in range(t):
+        for jj in range(t):
+            r = (t_vec[j] - t_vec[jj]) ** 2
+            var_x[j, jj] = 1 / s * torch.exp(-r / (2 * l))
+
+    L = torch.cholesky(var_x)
+    b_stor = torch.zeros(n)
+
+    for i in range(n):
+        e = torch.randn(t)
+        b_stor[i] = 2 * b * torch.rand(1) - b
+        X_hat[i, :, :] = torch.einsum('ik,k->i', [L, e])[None, :, None] + X[i, :, :] + b_stor[i] * torch.ones(1, t, 1)
+
+    # fit a personalized hmm
+    piohmm = HMM(X_hat, k=k, full_cov=False, priorV=False, io=False, personalized=True, personalized_io=False,
+                 state_io=False, UT=False, device='cpu', eps=1e-18, priorMu=True, var_fill=0.5)
+    piohmm_params, _, _, elbo, b_hat, _ = piohmm.learn_model(num_iter=3500, intermediate_save=False)
+    piohmm_mps, _, _ = piohmm.predict_sequence(piohmm_params, n_sample=b_hat)
+
+    piohmm_xhat = np.zeros((n, t))
+    piohmm_xvar = np.zeros((n, t))
+    for i in range(n):
+        for j in range(t):
+            idx = np.where(piohmm_mps[i, j].numpy() == np.arange(k))[0][0]
+            piohmm_xhat[i, j] = piohmm_params['mu'][idx].numpy() + b_hat[i].detach().numpy()
+            piohmm_xvar[i, j] = 2 * np.sqrt(piohmm_params['var'][idx].numpy())
+
+    torch.save('model_results.pkl', {'params': piohmm_params, 'mps': piohmm_mps, 'piohmm_xhat': piohmm_xhat})
