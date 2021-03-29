@@ -778,7 +778,7 @@ class HMM:
                     denom = torch.einsum('i,ijk->ijk', [torch.sum(gamma.exp()*self.ins[None, :, :]**2*self.om[None, :, :], (1, 2)), torch.stack([torch.eye(self.d, device=self.device) for _ in range(self.k)])]) + \
                             var/vnoise
                     V_LU = torch.lu(denom)
-                    V = torch.lu_solve(num, *V_LU)
+                    V = torch.lu_solve(num[:, :, None], *V_LU).squeeze()
                 else:
                     if self.state_io:
                         V = torch.einsum('ijk,ijkl->il', [gamma.exp()*self.om[None, :, :],
